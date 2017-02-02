@@ -23,7 +23,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 local basePath = (shell and shell.dir().."/") or "./"
 local args = {...}
-local output, project, lib, traceMap = { }
+local output, traceMap, project, lib = { }, { }
 
 
 local function resolvePath(path)
@@ -31,6 +31,14 @@ local function resolvePath(path)
 		return path
 	else
 		return basePath..path
+	end
+end
+
+local function getSrcPath(path)
+	if path:sub(1, 1) == "/" then
+		return path..".lua"
+	else
+		return "src/"..path..".lua"
 	end
 end
 
@@ -59,6 +67,31 @@ local function trimWhitespace(str)
 		str = str:sub(1, #str - 1)
 	end
 	return str
+end
+
+local function splitString(str, separator)
+	local strs = { }
+	for s in str:gmatch("([^%"..separator.."]+)") do
+		strs[#strs + 1] = s
+	end
+	return strs
+end
+
+local function getName(path)
+	local strs = splitString(path, "/")
+	return strs[#strs]
+end
+
+local function addTrace(file, line)
+	traceMap[#traceMap + 1] = {file = file, oline = #output + 1, line = line}
+end
+
+local function traceLine(line)
+	for i = 1, #traceMap do
+		if line >= traceMap[i].oline and line < ((traceMap[i + 1] and traceMap[i + 1].oline) or (#output + 1)) then
+			return traceMap[i].file, line - traceMap[i].oline + traceMap[i].line
+		end
+	end
 end
 
 
@@ -101,19 +134,47 @@ local function loadProject()
 	return true
 end
 
-local function addSource(file)
-	local source = readLines("src/"..file)
+local function addSource(file, require)
+	local source = readLines(getSrcPath(file))
 	if not source then
-		print("Error: missing source file \""..file.."\".")
+		print("Error: missing source file \""..file..".lua\".")
 		return false
 	end
-	local ok, err = loadstring(table.concat(source), file)
+	local ok, err = loadstring(table.concat(source, "\n"), file)
 	if not ok then
-		print("Syntax error in \""..file.."\":")
-		print(err)
+		local parts = splitString(err, ":")
+		local errline = tonumber(parts[4])
+		table.remove(parts, 1)
+		table.remove(parts, 1)
+		table.remove(parts, 1)
+		table.remove(parts, 1)
+		local error = table.concat(parts, ":")
+		print("Syntax error in \""..file..".lua\" at line "..errline..":")
+		print(error)
+		return false
 	end
+	if require then
+		output[#output + 1] = "local "..getName(file).." = (function ()"
+	end
+	addTrace(file, 1)
 	for i = 1, #source do
-		output[#output + 1] = source[i]
+		local ln = trimWhitespace(source[i])
+		if ln:sub(1, 10) == "--#include" then
+			if not addSource(trimWhitespace(ln:sub(12))) then
+				return false
+			end
+			addTrace(file, i + 1)
+		elseif ln:sub(1, 10) == "--#require" then
+			if not addSource(trimWhitespace(ln:sub(12)), true) then
+				return false
+			end
+			addTrace(file, i + 1)
+		else
+			output[#output + 1] = source[i]
+		end
+	end
+	if require then
+		output[#output + 1] = "end)()"
 	end
 	return true
 end
@@ -124,9 +185,14 @@ local function buildProject()
 		return false
 	end
 
-	addSource(lib and "lib.lua" or "main.lua")
+	if not addSource(lib and "lib" or "main") then
+		return false
+	end
 
-	writeLines("target/"..project.name, output)
+	if not writeLines("target/"..project.name, output) then
+		print("Error: failed to write to output file.")
+		return false
+	end
 	print("Done.")
 	return true
 end
@@ -137,7 +203,21 @@ local function runProject()
 	for i = 2, #args do
 		prgargs[i - 1] = args[i]
 	end
-	func(unpack(prgargs))
+	local ok, err = pcall(func, unpack(prgargs))
+	if not ok then
+		if err then
+			local parts = splitString(err, ":")
+			local errline = tonumber(parts[2])
+			table.remove(parts, 1)
+			table.remove(parts, 1)
+			local error = table.concat(parts, ":")
+			local file, line = traceLine(errline)
+			print("Runtime error in \""..file..".lua\" at line "..line..": ")
+			print(error)
+		else
+			print("Runtime error: unknown (returned nil).")
+		end
+	end
 end
 
 if #args == 0 then
@@ -164,6 +244,14 @@ elseif args[1] == "trace" then
 		print("carl trace <line>")
 	elseif not buildProject() then
 		print("Failed to build project.")
+	else
+		local oline = tonumber(args[2])
+		if oline < 1 or oline > #output then
+			print("Line outside range (1-"..#output..").")
+		else
+			local file, line = traceLine(tonumber(args[2]))
+			print("\""..file..".lua\" at line "..line..".")
+		end
 	end
 else
 	print("invalid subcommand \""..args[1].."\"")
