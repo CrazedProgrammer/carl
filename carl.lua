@@ -25,7 +25,6 @@ local basePath = (shell and shell.dir().."/") or "./"
 local args = {...}
 local output, traceMap, project, lib = { }, { }
 
-
 local function resolvePath(path)
 	if path:sub(1, 1) == "/" then
 		return path
@@ -180,13 +179,18 @@ local function addSource(file, require)
 end
 
 local function buildProject()
-	print("Building project...")
 	if not loadProject() then
 		return false
 	end
-
+	print("Building "..project.name.."...")
+	if lib then
+		output[#output + 1] = "local "..project.name.." = { } do"
+	end
 	if not addSource(lib and "lib" or "main") then
 		return false
+	end
+	if lib then
+		output[#output + 1] = "end return "..project.name
 	end
 
 	if not writeLines("target/"..project.name, output) then
