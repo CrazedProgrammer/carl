@@ -198,7 +198,7 @@ local function compressProject()
 		output[i] = trimWhitespace(output[i])
 		local cpos = output[i]:find("--", 1, true)
 		if cpos then
-			if cpos <= 0 then
+			if cpos <= 0 and not output[i] == "--[[" then
 				output[i] = ""
 			else
 				if not output[i]:sub(cpos, cpos + 3) == "--[[" then
@@ -284,7 +284,6 @@ local function compressProject()
 		end
 		return table.concat(result)
 	end
-
 	local datatab = { }
 	for i = 1, #data, nchars do
 		datatab[#datatab + 1] = 0
@@ -300,7 +299,6 @@ local function compressProject()
 	output[#output + 1] = "\t\tsetfenv(f, getfenv(1))"
 	output[#output + 1] = "\t\t"..(lib and (project.name.." = ") or "").."f()"
 	output[#output + 1] = "\tend"
-
 	output[#output + 1] = "end"..(lib and " return "..project.name or "")
 
 	local newsize = #table.concat(output, "\n")
