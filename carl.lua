@@ -95,44 +95,6 @@ end
 
 
 
-local function loadProject()
-	local source = readLines("src/main.lua")
-	if not source then
-		source = readLines("src/lib.lua")
-		if source then
-			lib = true
-		else
-			print("Error: missing main source file \"src/main.lua\" or \"src/lib.lua\".")
-			return false
-		end
-	end
-
-	local cfg = readLines("Carl.cf")
-	if not cfg then
-		print("Warning: Carl.cf missing, using defaults.")
-		project = {name = "prg", author = "<author>", version = "0.1.0"}
-	else
-		project = { }
-		for i = 1, #cfg do
-			cfg[i] = trimWhitespace(cfg[i])
-			if cfg[i]:find("#") then
-				cfg[i] = cfg[i]:sub(1, (cfg[i]:find("#")) - 1)
-			end
-			if cfg[i] ~= "" then
-				local key = trimWhitespace(cfg[i]:sub(1, (cfg[i]:find("=")) - 1))
-				local value = trimWhitespace(cfg[i]:sub((cfg[i]:find("=")) + 1))
-				project[key] = value
-			end
-		end
-		if not (project.name and project.author and project.version) then
-			print("Error: missing project name, author or version.")
-			return false
-		end
-	end
-
-	return true
-end
-
 local function addSource(file, require)
 	local source = readLines(getSrcPath(file))
 	if not source then
@@ -178,7 +140,174 @@ local function addSource(file, require)
 	return true
 end
 
-local function buildProject()
+local function newProject(name, library)
+	print("Creating new project \""..name.."\"...")
+	if not writeLines(name.."/Carl.cf", {"name = "..name, "version = 0.1.0", "author = <author>"}) then
+		print("Could not write to \""..resolvePath(name.."/Carl.cf").."\".")
+		return false
+	elseif not writeLines(name.."/src/"..(library and "lib.lua" or "main.lua"), {"print(\"Hello, world!\")"}) then
+		print("Could not write to \""..resolvePath(name.."/src/"..(library and "lib.lua" or "main.lua")).."\".")
+		return false
+	end
+	print("Done.")
+	return true
+end
+
+local function loadProject()
+	local source = readLines("src/main.lua")
+	if not source then
+		source = readLines("src/lib.lua")
+		if source then
+			lib = true
+		else
+			print("Error: missing main source file \"src/main.lua\" or \"src/lib.lua\".")
+			return false
+		end
+	end
+
+	local cfg = readLines("Carl.cf")
+	if not cfg then
+		print("Warning: Carl.cf missing, using defaults.")
+		project = {name = "prg", author = "<author>", version = "0.1.0"}
+	else
+		project = { }
+		for i = 1, #cfg do
+			cfg[i] = trimWhitespace(cfg[i])
+			if cfg[i]:find("#") then
+				cfg[i] = cfg[i]:sub(1, (cfg[i]:find("#")) - 1)
+			end
+			if cfg[i] ~= "" then
+				local key = trimWhitespace(cfg[i]:sub(1, (cfg[i]:find("=")) - 1))
+				local value = trimWhitespace(cfg[i]:sub((cfg[i]:find("=")) + 1))
+				project[key] = value
+			end
+		end
+		if not (project.name and project.author and project.version) then
+			print("Error: missing project name, author or version.")
+			return false
+		end
+	end
+
+	return true
+end
+
+local function compressProject()
+	local originalsize = #table.concat(output, "\n")
+	print("Compressing...")
+	for i = 1, #output do
+		output[i] = trimWhitespace(output[i])
+		local cpos = output[i]:find("--", 1, true)
+		if cpos then
+			if cpos <= 0 then
+				output[i] = ""
+			else
+				if not output[i]:sub(cpos, cpos + 3) == "--[[" then
+					output[i] = output[i]:sub(1, cpos - 1)
+				end
+			end
+		end
+	end
+
+	local function lzwCompress(str)
+		local result, dict, w, dsize, char = { }, { }, "", 255
+		for i = 0, 255 do
+			dict[string.char(i)] = i
+		end
+		for i = 1, #str do
+			char = str:sub(i, i)
+			if dict[w..char] then
+				w = w..char
+			else
+				result[#result + 1] = dict[w]
+				dsize = dsize + 1
+				dict[w..char] = dsize
+				w = char
+			end
+		end
+		if w ~= "" then
+			result[#result + 1] = dict[w]
+		end
+		return result
+	end
+
+	local compresslist = lzwCompress(table.concat(output, "\n"))
+	local maxnum = 0
+	for i = 1, #compresslist do
+		if compresslist[i] > maxnum then
+			maxnum = compresslist[i]
+		end
+	end
+
+	local basestr = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789~`!@#$%^&*()_+-=[]{}|:;'<,>.?/ "
+	local base = #basestr
+	local basechars = { }
+	for i = 1, base do
+		basechars[i] = basestr:sub(i, i)
+	end
+
+	local nchars = math.ceil(math.log(maxnum) / math.log(base))
+	local complist = { }
+	for i = 1, #compresslist do
+		for j = 0, nchars - 1 do
+			complist[#complist + 1] = basechars[math.floor(compresslist[i] / (base ^ j)) % base + 1]
+		end
+	end
+	local compstr = table.concat(complist)
+	output = { }
+	output[#output + 1] = (lib and "local "..project.name.." " or "").."do"
+	output[#output + 1] = "\tlocal data = \""..compstr.."\""
+	output[#output + 1] = "\tlocal basestr = \""..basestr.."\""
+	output[#output + 1] = "\tlocal nchars = \""..nchars.."\""
+	output[#output + 1] = [[
+	local base = #basestr
+	local basenums = { }
+	for i = 1, base do
+		basenums[basestr:sub(i, i)] = i - 1
+	end
+	local function lzwDecompress(tab)
+		local result, dict, dsize, e, w, k = { }, { }, 255, "", "", ""
+		for i = 0, 255 do
+			dict[i] = string.char(i)
+		end
+		for i = 1, #tab do
+			k = tab[i]
+			if dict[k] then
+				e = dict[k]
+			elseif k == dsize then
+				e = w..w:sub(1, 1)
+			end
+			result[#result + 1] = e
+			dict[dsize] = w..e:sub(1, 1)
+			dsize = dsize + 1
+			w = e
+		end
+		return table.concat(result)
+	end
+
+	local datatab = { }
+	for i = 1, #data, nchars do
+		datatab[#datatab + 1] = 0
+		for j = 0, nchars - 1 do
+			datatab[#datatab] = datatab[#datatab] + basenums[data:sub(i + j, i + j)] * base ^ j
+		end
+	end
+	local exestr = lzwDecompress(datatab)]]
+	if lib then
+		output[#output + 1] = "\t"..project.name.." = loadstring(exestr)()"
+	else
+		output[#output + 1] = "\tloadstring(exestr)(...)"
+	end
+
+	output[#output + 1] = "end"..(lib and " return "..project.name or "")
+
+	local newsize = #table.concat(output, "\n")
+	print(originalsize.." -> "..newsize.." bytes.")
+	if newsize > originalsize then
+		print("Warning: compressed size is larger than non-compressed size, consider removing --compress.")
+	end
+end
+
+local function buildProject(compress)
 	if not loadProject() then
 		return false
 	end
@@ -191,6 +320,10 @@ local function buildProject()
 	end
 	if lib then
 		output[#output + 1] = "end return "..project.name
+	end
+
+	if compress then
+		compressProject()
 	end
 
 	if not writeLines("target/"..project.name, output) then
@@ -225,6 +358,7 @@ local function runProject()
 end
 
 if #args == 0 then
+	print("carl new <name>")
 	print("carl build")
 	print("carl run [...]")
 	print("carl trace <line>")
@@ -232,9 +366,11 @@ if #args == 0 then
 end
 
 if args[1] == "new" then
-	newProject(args[2], args[3] and (args[3] == "--lib"))
+	if not newProject(args[2], args[3] == "--lib") then
+		print("Failed to create new project.")
+	end
 elseif args[1] == "build" then
-	if not buildProject() then
+	if not buildProject(args[2] == "--compress") then
 		print("Failed to build project.")
 	end
 elseif args[1] == "run" then
