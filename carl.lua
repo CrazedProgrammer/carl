@@ -348,7 +348,19 @@ local function runProject()
 	for i = 2, #args do
 		prgargs[i - 1] = args[i]
 	end
+	local cdir, crunning
+	if shell then
+		cdir = shell.dir()
+		shell.setDir(resolvePath("target"))
+		crunning = shell.getRunningProgram
+		shell.getRunningProgram = function () return resolvePath("target/"..project.name) end
+	end
 	local ok, err = pcall(func, unpack(prgargs))
+	if shell then
+		shell.setDir(cdir)
+		shell.getRunningProgram = crunning
+	end
+	
 	if not ok then
 		if err then
 			local parts = splitString(err, ":")
