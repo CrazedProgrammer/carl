@@ -253,7 +253,7 @@ local function compressProject()
 		end
 	end
 	local compstr = table.concat(complist)
-	
+
 	output = { }
 	output[#output + 1] = (lib and "local "..project.name.." " or "").."do"
 	output[#output + 1] = "\tlocal data = \""..compstr.."\""
@@ -342,7 +342,7 @@ local function runProject()
 	if load then
 		func = load(table.concat(readLines("target/"..project.name), "\n"), project.name, nil, _ENV)
 	else
-		func = loadstring(table.concat(readLines("target/"..project.name), project.name)
+		func = loadstring(table.concat(readLines("target/"..project.name), "\n"), project.name)
 		setfenv(func, getfenv(1))
 	end
 
