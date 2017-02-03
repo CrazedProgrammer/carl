@@ -292,11 +292,13 @@ local function compressProject()
 		end
 	end
 	local exestr = lzwDecompress(datatab)]]
-	if lib then
-		output[#output + 1] = "\t"..project.name.." = loadstring(exestr)()"
-	else
-		output[#output + 1] = "\tloadstring(exestr)(...)"
-	end
+	output[#output + 1] = "\tif load then"
+	output[#output + 1] = "\t\t"..(lib and (project.name.." = ") or "").."(load(exestr, \""..project.name.."\", nil, _ENV))()"
+	output[#output + 1] = "\telse"
+	output[#output + 1] = "\t\tlocal f = loadstring(exestr, \""..project.name.."\")"
+	output[#output + 1] = "\t\tsetfenv(f, getfenv(1))"
+	output[#output + 1] = "\t\t"..(lib and (project.name.." = ") or "").."f()"
+	output[#output + 1] = "\tend"
 
 	output[#output + 1] = "end"..(lib and " return "..project.name or "")
 
@@ -335,7 +337,7 @@ local function buildProject(compress)
 end
 
 local function runProject()
-	local func = loadfile(resolvePath("target/"..project.name))
+	local func = load(table.concat(readLines("target/"..project.name), "\n"), project.name, nil, _ENV)
 	local prgargs = { }
 	for i = 2, #args do
 		prgargs[i - 1] = args[i]
