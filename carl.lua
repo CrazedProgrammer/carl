@@ -192,7 +192,6 @@ local function loadProject()
 end
 
 local function compressProject()
-	local originalsize = #table.concat(output, "\n")
 	print("Compressing...")
 	for i = 1, #output do
 		output[i] = trimWhitespace(output[i])
@@ -300,15 +299,9 @@ local function compressProject()
 	output[#output + 1] = "\t\t"..(lib and (project.name.." = ") or "").."f()"
 	output[#output + 1] = "\tend"
 	output[#output + 1] = "end"..(lib and " return "..project.name or "")
-
-	local newsize = #table.concat(output, "\n")
-	print(originalsize.." -> "..newsize.." bytes.")
-	if newsize > originalsize then
-		print("Warning: compressed size is larger than non-compressed size, consider removing --compress.")
-	end
 end
 
-local function buildProject(compress)
+local function buildProject(compress, trace)
 	if not loadProject() then
 		return false
 	end
@@ -323,8 +316,37 @@ local function buildProject(compress)
 		output[#output + 1] = "end return "..project.name
 	end
 
+	local originalsize
 	if compress then
+		originalsize = #table.concat(output, "\n")
 		compressProject()
+	end
+
+	if lib and trace and textutils then
+		output[#output] = "end"
+		output[#output + 1] = "local line = (...)"
+		output[#output + 1] = "if line then"
+		output[#output + 1] = "\tlocal traceMap = "..textutils.serialise(traceMap)
+		output[#output + 1] = [[
+	local function traceLine(line)
+		for i = 1, #traceMap do
+			if line >= traceMap[i].oline and line < ((traceMap[i + 1] and traceMap[i + 1].oline) or (#output + 1)) then
+				return traceMap[i].file, line - traceMap[i].oline + traceMap[i].line
+			end
+		end
+	end]]
+		output[#output + 1] = "\tlocal file, line = traceLine(tonumber(line))"
+		output[#output + 1] = [[	print("\""..file..".lua\" at line "..line..".")]]
+		output[#output + 1] = "end"
+		output[#output + 1] = "return "..project.name
+	end
+
+	if compress then
+		local newsize = #table.concat(output, "\n")
+		print(originalsize.." -> "..newsize.." bytes")
+		if newsize > originalsize then
+			print("Warning: new size is bigger, consider removing \"--compress\".")
+		end
 	end
 
 	if not writeLines("target/"..project.name, output) then
@@ -385,12 +407,17 @@ if #args == 0 then
 	return
 end
 
+local largs = { }
+for i = 1, #args do
+	largs[args[i]] = true
+end
+
 if args[1] == "new" then
-	if not newProject(args[2], args[3] == "--lib") then
+	if not newProject(args[2], largs["--lib"]) then
 		print("Failed to create new project.")
 	end
 elseif args[1] == "build" then
-	if not buildProject(args[2] == "--compress") then
+	if not buildProject(largs["--compress"], largs["--trace"]) then
 		print("Failed to build project.")
 	end
 elseif args[1] == "run" then
